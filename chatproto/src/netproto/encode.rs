@@ -1,15 +1,18 @@
 use std::{collections::HashMap, io::Write};
 
 use byteorder::{LittleEndian, WriteBytesExt};
-use uuid::{Uuid};
+use uuid::Uuid;
 
-use crate::messages::{AuthMessage, ClientError, ClientId, ClientMessage, ClientPollReply, ClientQuery, ClientReply, DelayedError, Sequence, ServerId, ServerMessage};
+use crate::messages::{
+  AuthMessage, ClientError, ClientId, ClientMessage, ClientPollReply, ClientQuery, ClientReply,
+  DelayedError, Sequence, ServerId, ServerMessage,
+};
 
 // look at the README.md for guidance on writing this function
 // this function is used to encode all the "sizes" values that will appear after that
 pub fn u128<W>(w: &mut W, m: u128) -> std::io::Result<()>
-  where
-      W: Write,
+where
+  W: Write,
 {
   if m < 251 {
     w.write_u8(m as u8)?;
@@ -48,7 +51,7 @@ pub fn clientid<W>(w: &mut W, m: &ClientId) -> std::io::Result<()>
 where
   W: Write,
 {
-    uuid(w, &m.0)
+  uuid(w, &m.0)
 }
 
 // reuse uuid
@@ -56,7 +59,7 @@ pub fn serverid<W>(w: &mut W, m: &ServerId) -> std::io::Result<()>
 where
   W: Write,
 {
-    uuid(w, &m.0)
+  uuid(w, &m.0)
 }
 
 // strings are encoded as the underlying bytes array
@@ -65,8 +68,8 @@ where
 //  2/ write the size (using u128)
 //  3/ write the array
 pub fn string<W>(w: &mut W, m: &str) -> std::io::Result<()>
-  where
-      W: Write,
+where
+  W: Write,
 {
   // Convert the string to bytes
   let string_bytes = m.as_bytes();
@@ -125,15 +128,15 @@ where
     AuthMessage::Auth { response } => {
       u128(w, 2)?;
       w.write_all(response)?
-    },
+    }
     _ => panic!("Invalid tag"),
   }
   Ok(())
 }
 
 pub fn server<W>(w: &mut W, m: &ServerMessage) -> std::io::Result<()>
-  where
-      W: Write,
+where
+  W: Write,
 {
   match m {
     ServerMessage::Message(msg) => {
@@ -166,7 +169,7 @@ pub fn server<W>(w: &mut W, m: &ServerMessage) -> std::io::Result<()>
         clientid(w, client_id)?;
         string(w, client_name)?;
       }
-    },
+    }
     _ => panic!("Invalid tag"),
   }
   Ok(())
@@ -183,13 +186,13 @@ where
       string(w, content)
     }
     ClientMessage::MText { dest, content } => {
-        u128(w, 1)?;
+      u128(w, 1)?;
       u128(w, dest.len() as u128)?;
       for client_id in dest {
         clientid(w, client_id)?;
       }
       string(w, content)
-    },
+    }
     _ => panic!("Invalid tag"),
   }
 }
@@ -202,29 +205,29 @@ where
     match reply {
       ClientReply::Delivered => {
         u128(w, 0)?;
-      },
+      }
       ClientReply::Error(err) => {
         u128(w, 1)?;
         match err {
           ClientError::WorkProofError => {
             u128(w, 0)?;
-          },
+          }
           ClientError::UnknownClient => {
             u128(w, 1)?;
-          },
+          }
           ClientError::SequenceError => {
             u128(w, 2)?;
-          },
+          }
           ClientError::BoxFull(id) => {
             u128(w, 3)?;
             clientid(w, id)?;
-          },
+          }
           ClientError::InternalError => {
             u128(w, 4)?;
-          },
+          }
           _ => panic!("Invalid error tag"),
         }
-      },
+      }
       ClientReply::Delayed => {
         u128(w, 2)?;
       }
@@ -232,7 +235,7 @@ where
         u128(w, 3)?;
         serverid(w, id)?;
         server(w, msg)?;
-      },
+      }
       _ => panic!("Invalid tag"),
     }
   }
@@ -248,37 +251,36 @@ where
       u128(w, 0)?;
       clientid(w, src)?;
       string(w, content)?;
-    },
+    }
     ClientPollReply::DelayedError(err) => {
       u128(w, 1)?;
       match err {
         DelayedError::UnknownRecipient(id) => {
           u128(w, 0)?;
           clientid(w, id)?;
-        },
+        }
         _ => panic!("Invalid error tag"),
       }
-    },
+    }
     ClientPollReply::Nothing => {
       u128(w, 2)?;
-    },
+    }
     _ => panic!("Invalid tag"),
   }
   Ok(())
 }
-
 
 // hashmaps are encoded by first writing the size (using u128), then each key and values
 pub fn userlist<W>(w: &mut W, m: &HashMap<ClientId, String>) -> std::io::Result<()>
 where
   W: Write,
 {
-    u128(w, m.len() as u128)?;
-    for (client_id, client_name) in m {
-        clientid(w, client_id)?;
-        string(w, client_name)?;
-    }
-    Ok(())
+  u128(w, m.len() as u128)?;
+  for (client_id, client_name) in m {
+    clientid(w, client_id)?;
+    string(w, client_name)?;
+  }
+  Ok(())
 }
 
 pub fn client_query<W>(w: &mut W, m: &ClientQuery) -> std::io::Result<()>
@@ -289,17 +291,17 @@ where
     ClientQuery::Register(str) => {
       u128(w, 0)?;
       string(w, str)?;
-    },
+    }
     ClientQuery::Message(msg) => {
       u128(w, 1)?;
       client(w, msg)?;
-    },
+    }
     ClientQuery::Poll => {
       u128(w, 2)?;
-    },
+    }
     ClientQuery::ListUsers => {
       u128(w, 3)?;
-    },
+    }
     _ => panic!("Invalid tag"),
   }
   Ok(())
@@ -311,9 +313,9 @@ where
   X: serde::Serialize,
   ENC: FnOnce(&mut W, &X) -> std::io::Result<()>,
 {
-    u128(w, m.seqid)?;
-    clientid(w, &m.src)?;
-    u128(w, m.workproof)?;
-    f(w, &m.content)?;
-    Ok(())
+  u128(w, m.seqid)?;
+  clientid(w, &m.src)?;
+  u128(w, m.workproof)?;
+  f(w, &m.content)?;
+  Ok(())
 }

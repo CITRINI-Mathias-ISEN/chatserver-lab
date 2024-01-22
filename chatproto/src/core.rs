@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
-use crate::messages::{ClientError, ClientId, ClientMessage, ClientPollReply, ClientReply, Sequence, ServerId};
+use crate::messages::{
+  ClientError, ClientId, ClientMessage, ClientPollReply, ClientReply, Sequence, ServerId,
+};
 #[cfg(feature = "federation")]
 use crate::messages::{ServerMessage, ServerReply};
 

@@ -3,7 +3,10 @@ use std::{collections::HashMap, io::Read};
 use byteorder::{LittleEndian, ReadBytesExt};
 use uuid::Uuid;
 
-use crate::messages::{AuthMessage, ClientError, ClientId, ClientMessage, ClientPollReply, ClientQuery, ClientReply, DelayedError, FullyQualifiedMessage, Sequence, ServerId, ServerMessage};
+use crate::messages::{
+  AuthMessage, ClientError, ClientId, ClientMessage, ClientPollReply, ClientQuery, ClientReply,
+  DelayedError, FullyQualifiedMessage, Sequence, ServerId, ServerMessage,
+};
 
 // look at the README.md for guidance on writing this function
 pub fn u128<R: Read>(rd: &mut R) -> anyhow::Result<u128> {
@@ -27,7 +30,7 @@ fn uuid<R: Read>(rd: &mut R) -> anyhow::Result<Uuid> {
   rd.read_exact(&mut uuid_bytes)?;
 
   // Convert vec<u8> to vec<Bytes>
-    let uuid_bytes = uuid_bytes.into_iter().map(|b| b.into()).collect::<Vec<_>>();
+  let uuid_bytes = uuid_bytes.into_iter().map(|b| b.into()).collect::<Vec<_>>();
 
   // Convert vec<Bytes> to Uuid
   Ok(Uuid::from_slice(&uuid_bytes).unwrap())
@@ -44,18 +47,17 @@ pub fn serverid<R: Read>(rd: &mut R) -> anyhow::Result<ServerId> {
 }
 
 pub fn string<R: Read>(rd: &mut R) -> anyhow::Result<String> {
+  // Read the size of the array
+  let size = u128(rd)?;
 
-    // Read the size of the array
-    let size = u128(rd)?;
+  // Read the array
+  let mut string_bytes = vec![0u8; size as usize];
+  rd.read_exact(&mut string_bytes)?;
 
-    // Read the array
-    let mut string_bytes = vec![0u8; size as usize];
-    rd.read_exact(&mut string_bytes)?;
+  // Convert bytes to String
+  let string_value = String::from_utf8_lossy(&string_bytes).into_owned();
 
-    // Convert bytes to String
-    let string_value = String::from_utf8_lossy(&string_bytes).into_owned();
-
-    Ok(string_value)
+  Ok(string_value)
 }
 
 pub fn auth<R: Read>(rd: &mut R) -> anyhow::Result<AuthMessage> {
@@ -79,7 +81,7 @@ pub fn auth<R: Read>(rd: &mut R) -> anyhow::Result<AuthMessage> {
       // Read the AuthMessage::Auth { response } => { u8;16
       let mut response = [0u8; 16];
       rd.read_exact(&mut response)?;
-        Ok(AuthMessage::Auth { response })
+      Ok(AuthMessage::Auth { response })
     }
     _ => panic!("Invalid tag"),
   }
@@ -97,7 +99,9 @@ pub fn client<R: Read>(rd: &mut R) -> anyhow::Result<ClientMessage> {
     1 => {
       // Decode MText variant
       let dest_size = u128(rd)? as usize;
-      let dest = (0..dest_size).map(|_| clientid(rd)).collect::<Result<_, _>>()?;
+      let dest = (0..dest_size)
+        .map(|_| clientid(rd))
+        .collect::<Result<_, _>>()?;
       let content = string(rd)?;
       Ok(ClientMessage::MText { dest, content })
     }
@@ -185,11 +189,11 @@ pub fn server<R: Read>(rd: &mut R) -> anyhow::Result<ServerMessage> {
 
       let dsts_size = u128(rd)? as usize;
       let mut dsts = Vec::with_capacity(dsts_size);
-        for _ in 0..dsts_size {
-            let client_id = clientid(rd)?;
-            let server_id = serverid(rd)?;
-            dsts.push((client_id, server_id));
-        }
+      for _ in 0..dsts_size {
+        let client_id = clientid(rd)?;
+        let server_id = serverid(rd)?;
+        dsts.push((client_id, server_id));
+      }
 
       let content = string(rd)?;
 
@@ -200,23 +204,23 @@ pub fn server<R: Read>(rd: &mut R) -> anyhow::Result<ServerMessage> {
         content,
       };
 
-        Ok(ServerMessage::Message(msg))
+      Ok(ServerMessage::Message(msg))
     }
     _ => panic!("Invalid tag"),
   }
 }
 
 pub fn userlist<R: Read>(rd: &mut R) -> anyhow::Result<HashMap<ClientId, String>> {
-    let mut clients = HashMap::new();
+  let mut clients = HashMap::new();
 
-    let clients_size = u128(rd)? as usize;
-    for _ in 0..clients_size {
-        let client_id = clientid(rd)?;
-        let client_name = string(rd)?;
-        clients.insert(client_id, client_name);
-    }
+  let clients_size = u128(rd)? as usize;
+  for _ in 0..clients_size {
+    let client_id = clientid(rd)?;
+    let client_name = string(rd)?;
+    clients.insert(client_id, client_name);
+  }
 
-    Ok(clients)
+  Ok(clients)
 }
 
 pub fn client_query<R: Read>(rd: &mut R) -> anyhow::Result<ClientQuery> {
@@ -240,14 +244,14 @@ pub fn sequence<X, R: Read, DEC>(rd: &mut R, d: DEC) -> anyhow::Result<Sequence<
 where
   DEC: FnOnce(&mut R) -> anyhow::Result<X>,
 {
-    let seqid = u128(rd)?;
-    let src = clientid(rd)?;
-    let workproof = u128(rd)?;
-    let content = d(rd)?;
-    Ok(Sequence {
-        seqid,
-        src,
-        workproof,
-        content,
-    })
+  let seqid = u128(rd)?;
+  let src = clientid(rd)?;
+  let workproof = u128(rd)?;
+  let content = d(rd)?;
+  Ok(Sequence {
+    seqid,
+    src,
+    workproof,
+    content,
+  })
 }

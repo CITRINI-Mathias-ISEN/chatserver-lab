@@ -291,6 +291,7 @@ async fn message_to_outer_user<M: MessageServer>() -> anyhow::Result<()> {
   let euuid = ClientId::default();
 
   log::debug!("route: {} -> {} -> {} -> us", s1, s2, s3);
+  println!("route: {} -> {} -> {} -> us", s1, s2, s3);
 
   let r = server
     .handle_server_message(ServerMessage::Announce {
@@ -340,6 +341,7 @@ async fn message_to_outer_user_delayed<M: MessageServer>() -> anyhow::Result<()>
   let euuid = ClientId::default();
 
   log::debug!("route: {} -> {} -> {} -> us", s1, s2, s3);
+  println!("route: {} -> {} -> {} -> us", s1, s2, s3);
 
   let r = server
     .handle_client_message(
@@ -383,10 +385,10 @@ async fn routing_test<M: MessageServer>() -> anyhow::Result<()> {
   let c1 = server.register_local_client("user 1".to_string()).await;
   /* map:
 
-        us - s1 - s2
-         |         |
-        s5 - s4 - s3 
-   */
+       us - s1 - s2
+        |         |
+       s5 - s4 - s3
+  */
   let s1 = ServerId::from(1);
   let s2 = ServerId::from(2);
   let s3 = ServerId::from(3);

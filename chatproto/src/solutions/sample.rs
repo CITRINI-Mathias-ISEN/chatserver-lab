@@ -1,6 +1,7 @@
+use std::cmp::{Ordering, Reverse};
 use async_std::sync::RwLock;
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use uuid::Uuid;
 
 use crate::{
@@ -12,25 +13,38 @@ use crate::{
   workproof::verify_workproof,
 };
 
+use crate::messages::ClientQuery;
 #[cfg(feature = "federation")]
 use crate::messages::{Outgoing, ServerMessage, ServerReply};
-use crate::messages::ClientQuery;
 use crate::netproto::decode::u128;
 
 // this structure will contain the data you need to track in your server
 // this will include things like delivered messages, clients last seen sequence number, etc.
 pub struct Server {
-  id : ServerId,
-  clients : RwLock<Vec<(ClientId, String, u64, Vec<(ClientId, String)>)>>,
-  routes : RwLock<Vec<Vec<ServerId>>>,
-  stored : RwLock<Vec<(ServerId, ClientId, String)>>,
+  id: ServerId,
+  clients: RwLock<Vec<Client>>,
+  routes: RwLock<Vec<Vec<ServerId>>>,
+  neighbours: RwLock<HashMap<ServerId, Vec<ServerId>>>,
+  stored: RwLock<Vec<Stored>>,
+  remote_clients: RwLock<HashMap<ClientId, ClientInfo>>,
+}
+
+pub struct Stored {
+  src: ClientId,
+  dst: ClientId,
+  content: String,
 }
 
 pub struct Client {
-  id : ClientId,
-  name : String,
-  last_seen : u64,
-  mailbox : Vec<(ClientId, String)>,
+  id: ClientId,
+  name: String,
+  last_seen: u64,
+  mailbox: Vec<(ClientId, String)>,
+}
+
+pub struct ClientInfo {
+  name: String,
+  server: ServerId,
 }
 
 #[async_trait]
@@ -38,7 +52,14 @@ impl MessageServer for Server {
   const GROUP_NAME: &'static str = "CITRINI Mathias, REPPLINGER Julien, VASSOILLE Rémi";
 
   fn new(id: ServerId) -> Self {
-    Self { id, clients: Default::default(), routes: Default::default(), stored: Default::default() }
+    Self {
+      id,
+      clients: Default::default(),
+      routes: Default::default(),
+      neighbours: Default::default(),
+      stored: Default::default(),
+      remote_clients: Default::default(),
+    }
   }
 
   // note: you need to roll a Uuid, and then convert it into a ClientId
@@ -49,7 +70,12 @@ impl MessageServer for Server {
     let client_id = ClientId::from(uuid);
     let mut clients = self.clients.write().await;
     log::info!("Registering client {} with id {}", name, client_id);
-    clients.push((client_id, name, 0, Vec::new()));
+    clients.push(Client {
+      id: client_id,
+      name,
+      last_seen: 0,
+      mailbox: Vec::new(),
+    });
     return client_id;
   }
 
@@ -62,8 +88,8 @@ impl MessageServer for Server {
   async fn list_users(&self) -> HashMap<ClientId, String> {
     let clients = self.clients.read().await;
     let mut users = HashMap::new();
-    for (id, name, _, _) in clients.iter() {
-      users.insert(*id, name.clone());
+    for client in clients.iter() {
+      users.insert(client.id, client.name.clone());
     }
     users
   }
@@ -78,25 +104,40 @@ impl MessageServer for Server {
     It is recommended to write an function that handles a single message and use it to handle
     both ClientMessage variants.
   */
-  async fn handle_sequenced_message<A: Send>(&self, sequence: Sequence<A>) -> Result<A, ClientError> {
-    log::debug!("Handling sequenced message from {} with seqid {}", sequence.src, sequence.seqid);
+  async fn handle_sequenced_message<A: Send>(
+    &self,
+    sequence: Sequence<A>,
+  ) -> Result<A, ClientError> {
+    log::debug!(
+      "Handling sequenced message from {} with seqid {}",
+      sequence.src,
+      sequence.seqid
+    );
 
     // check workproof
-    if !verify_workproof((&sequence.src).into(), sequence.workproof, WORKPROOF_STRENGTH) {
+    if !verify_workproof(
+      (&sequence.src).into(),
+      sequence.workproof,
+      WORKPROOF_STRENGTH,
+    ) {
       log::debug!("Workproof error");
       return Err(ClientError::WorkProofError);
     }
 
     // check if client is known
     let clients = self.clients.read().await;
-    let client = clients.iter().find(|(id, _, _, _)| *id == sequence.src);
-    if let Some((_, name, last_seen, _)) = client {
-      log::debug!("Message from known client : {}", name);
+    let client = clients.iter().find(|client| client.id == sequence.src);
+    if let Some(client) = client {
+      log::debug!("Message from known client : {}", client.name);
 
       // check if sequence number is correct
       log::debug!("received: {}", sequence.seqid);
-      if *last_seen >= (sequence.seqid as u64) {
-        log::debug!("Sequence error current: {}, received: {}", last_seen, sequence.seqid);
+      if client.last_seen >= (sequence.seqid as u64) {
+        log::debug!(
+          "Sequence error current: {}, received: {}",
+          client.last_seen,
+          sequence.seqid
+        );
         return Err(ClientError::SequenceError);
       }
 
@@ -105,8 +146,8 @@ impl MessageServer for Server {
 
       // update last seen sequence number
       let mut clients = self.clients.write().await;
-      if let Some((_, _, last_seen, _)) = clients.iter_mut().find(|(id, _, _, _)| *id == sequence.src) {
-      *last_seen = sequence.seqid as u64;
+      if let Some(client) = clients.iter_mut().find(|client| client.id == sequence.src) {
+        client.last_seen = sequence.seqid as u64;
       } else {
         log::debug!("Unknown client");
         return Err(ClientError::UnknownClient);
@@ -120,20 +161,20 @@ impl MessageServer for Server {
   }
 
   /* for the given client, return the next message or error if available */
-  async fn client_poll(&self, client: ClientId) -> ClientPollReply {
-    log::debug!("Polling client {:?}", client);
+  async fn client_poll(&self, client_id: ClientId) -> ClientPollReply {
+    log::debug!("Polling client {:?}", client_id);
 
     // Opening the write lock to remove the message from the mailbox
     let mut clients = self.clients.write().await;
-    let client_elem = clients.iter_mut().find(|(id, _, _, _)| *id == client);
+    let client_elem = clients.iter_mut().find(|client| client.id == client_id);
 
-    if let Some((_, _, _, mailbox)) = client_elem {
-      if mailbox.is_empty() {
+    if let Some(client) = client_elem {
+      if client.mailbox.is_empty() {
         return ClientPollReply::Nothing;
       }
 
       // Get the first message
-      let (src, msg) = mailbox.remove(0);
+      let (src, msg) = client.mailbox.remove(0);
 
       ClientPollReply::Message { src, content: msg }
     } else {
@@ -157,31 +198,84 @@ impl MessageServer for Server {
         let reply = self.handle_text_message(src, dest, content).await;
         replies.push(reply);
         replies
-      },
+      }
       ClientMessage::MText { dest, content } => {
-          let mut replies = Vec::new();
-          for client in dest {
-            let reply = self.handle_text_message(src, client, content.clone()).await;
-            replies.push(reply);
-          }
-          replies
-      },
+        let mut replies = Vec::new();
+        for client in dest {
+          let reply = self.handle_text_message(src, client, content.clone()).await;
+          replies.push(reply);
+        }
+        replies
+      }
     }
   }
 
   #[cfg(feature = "federation")]
   async fn handle_server_message(&self, msg: ServerMessage) -> ServerReply {
-    match msg {
+    return match msg {
       ServerMessage::Announce { route, clients } => {
         if route.len() == 0 {
           return ServerReply::EmptyRoute;
         }
-      },
-      ServerMessage::Message { .. } => {
-        return ServerReply::Outgoing(Vec::new());
-      },
-    }
-    ServerReply::Outgoing(Vec::new())
+        // Store the remote clients
+        let mut remote_clients = self.remote_clients.write().await;
+        for (client_id, string) in clients {
+          remote_clients.insert(
+            client_id,
+            ClientInfo {
+              name: string,
+              server: route.last().unwrap().clone(),
+            },
+          );
+        }
+        // Store the route
+        let mut routes = self.routes.write().await;
+        routes.push(route);
+        drop(routes);
+        // Store neighbours of each server
+        self.update_neighbours().await;
+        // Check if there are messages waiting for the remote clients, in this case, send server messages
+        let mut replies = Vec::new();
+        let mut stored = self.stored.write().await;
+        for message in stored.iter() {
+          if let Some(client_info) = remote_clients.get(&message.dst) {
+            if let Some(route) = self.route_to(client_info.server).await {
+              let dst = route.first().unwrap().clone();
+              let next_hop = route.last().unwrap().clone();
+              replies.push(Outgoing {
+                nexthop: next_hop,
+                message: FullyQualifiedMessage {
+                  src: message.src,
+                  srcsrv: self.id,
+                  dsts: vec![(message.dst, dst)],
+                  content: message.content.clone(),
+                },
+              });
+            }
+          }
+        }
+        drop(stored);
+        ServerReply::Outgoing(replies)
+      }
+      ServerMessage::Message(msg) => {
+        let next_server = self
+            .route_to(msg.dsts.first().unwrap().1)
+            .await
+            .unwrap()
+            .first()
+            .unwrap()
+            .clone();
+        ServerReply::Outgoing(vec![Outgoing {
+          nexthop: next_server,
+          message: FullyQualifiedMessage {
+            src: msg.src,
+            srcsrv: msg.srcsrv,
+            dsts: msg.dsts,
+            content: msg.content,
+          },
+        }])
+      }
+    };
   }
 
   // return a route to the target server
@@ -204,25 +298,107 @@ impl MessageServer for Server {
   }
 }
 
+
 impl Server {
-  async fn handle_text_message(&self, src:ClientId, dest:ClientId, content:String) -> ClientReply {
-    log::debug!("Handling text message from {} to {} : {}", src, dest, content);
+  async fn handle_text_message(
+    &self,
+    src: ClientId,
+    dest: ClientId,
+    content: String,
+  ) -> ClientReply {
+    log::debug!(
+      "Handling text message from {} to {} : {}",
+      src,
+      dest,
+      content
+    );
+
     let mut clients = self.clients.write().await;
-    let client = clients.iter_mut().find(|(id, _, _, _)| *id == dest);
-    if client.is_none() {
-      // Open write lock to add the message to the stored messages
-      let mut stored = self.stored.write().await;
-      stored.push((self.id, dest, content));
-      ClientReply::Delayed
-    } else {
-      let (_, _, last_seen, mailbox) = client.unwrap();
-      if mailbox.len() >= MAILBOX_SIZE {
-        ClientReply::Error(ClientError::BoxFull(dest))
-      } else {
-        mailbox.push((src, content));
-        ClientReply::Delivered
+    let client = clients.iter_mut().find(|client| client.id == dest);
+    let result = match client {
+      None => {
+        let maybe_id: Option<ServerId> = self.get_remote_client_server(dest).await;
+        if let Some(id) = maybe_id {
+          let next_server = self.route_to(id).await.unwrap().first().unwrap().clone();
+          ClientReply::Transfer(
+            id,
+            ServerMessage::Message(FullyQualifiedMessage {
+              src,
+              srcsrv: self.id,
+              dsts: vec![(dest, next_server)],
+              content,
+            }),
+          )
+        } else {
+          let mut stored = self.stored.write().await;
+          stored.push(
+            (Stored {
+              src,
+              dst: dest,
+              content,
+            }),
+          );
+          ClientReply::Delayed
+        }
       }
+      Some(client) => {
+        if client.mailbox.len() >= MAILBOX_SIZE {
+          ClientReply::Error(ClientError::BoxFull(dest))
+        } else {
+          client.mailbox.push((src, content));
+          ClientReply::Delivered
+        }
+      }
+    };
+
+    result
+  }
+
+  async fn is_local(&self, client_id: ClientId) -> bool {
+    let clients = self.clients.read().await;
+    clients.iter().any(|client| client.id == client_id)
+  }
+
+  async fn get_remote_client_server(&self, client_id: ClientId) -> Option<ServerId> {
+    let remote_clients = self.remote_clients.read().await;
+    // Get the server id of the client, knowing that it is a ClientInfo
+    remote_clients
+      .get(&client_id)
+      .map(|client_info| client_info.server)
+  }
+
+  async fn update_neighbours(&self) {
+    let mut neighbours = self.neighbours.write().await;
+    let mut routes = self.routes.read().await;
+    for route in routes.iter() {
+      for (i, server) in route.iter().enumerate() {
+        if i == 0 {
+          if !neighbours.contains_key(server) {
+            neighbours.insert(*server, Vec::new());
+          }
+        } else {
+          neighbours
+            .entry(*server)
+            .or_insert_with(Vec::new)
+            .push(route[i - 1]);
+          neighbours
+            .entry(route[i - 1])
+            .or_insert_with(Vec::new)
+            .push(*server);
+        }
+      }
+      neighbours
+        .entry(self.id)
+        .or_insert_with(Vec::new)
+        .push(route.last().unwrap().clone());
     }
+    // Filter duplicates
+    for (_, neighbours) in neighbours.iter_mut() {
+      neighbours.sort();
+      neighbours.dedup();
+    }
+
+    println!("Neighbours: {:?}", neighbours);
   }
 }
 
