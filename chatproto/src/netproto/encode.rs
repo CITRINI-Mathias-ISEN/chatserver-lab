@@ -129,7 +129,6 @@ where
       u128(w, 2)?;
       w.write_all(response)?
     }
-    _ => panic!("Invalid tag"),
   }
   Ok(())
 }
@@ -170,7 +169,6 @@ where
         string(w, client_name)?;
       }
     }
-    _ => panic!("Invalid tag"),
   }
   Ok(())
 }
@@ -193,7 +191,6 @@ where
       }
       string(w, content)
     }
-    _ => panic!("Invalid tag"),
   }
 }
 
@@ -225,7 +222,6 @@ where
           ClientError::InternalError => {
             u128(w, 4)?;
           }
-          _ => panic!("Invalid error tag"),
         }
       }
       ClientReply::Delayed => {
@@ -236,7 +232,6 @@ where
         serverid(w, id)?;
         server(w, msg)?;
       }
-      _ => panic!("Invalid tag"),
     }
   }
   Ok(())
@@ -259,13 +254,11 @@ where
           u128(w, 0)?;
           clientid(w, id)?;
         }
-        _ => panic!("Invalid error tag"),
       }
     }
     ClientPollReply::Nothing => {
       u128(w, 2)?;
     }
-    _ => panic!("Invalid tag"),
   }
   Ok(())
 }
@@ -302,7 +295,6 @@ where
     ClientQuery::ListUsers => {
       u128(w, 3)?;
     }
-    _ => panic!("Invalid tag"),
   }
   Ok(())
 }
