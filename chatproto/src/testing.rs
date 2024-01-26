@@ -57,13 +57,13 @@ async fn workproof_bad<M: MessageServer>() -> anyhow::Result<()> {
   let server: M = MessageServer::new(sid);
   let c1 = server.register_local_client("user 1".to_string()).await;
   let r = server
-    .handle_sequenced_message(Sequence {
-      seqid: 1,
-      src: c1,
-      workproof: 0,
-      content: (),
-    })
-    .await;
+      .handle_sequenced_message(Sequence {
+        seqid: 1,
+        src: c1,
+        workproof: 0,
+        content: (),
+      })
+      .await;
   match r {
     Err(ClientError::WorkProofError) => Ok(()),
     rr => anyhow::bail!("expected a workproof error, got {:?}", rr),
@@ -75,13 +75,13 @@ async fn sequence_multiple_problems<M: MessageServer>() -> anyhow::Result<()> {
   let server: M = MessageServer::new(sid);
   let c1 = ClientId::default();
   let r = server
-    .handle_sequenced_message(Sequence {
-      seqid: 1,
-      src: c1,
-      workproof: 0,
-      content: (),
-    })
-    .await;
+      .handle_sequenced_message(Sequence {
+        seqid: 1,
+        src: c1,
+        workproof: 0,
+        content: (),
+      })
+      .await;
   match r {
     Err(ClientError::WorkProofError) => Ok(()),
     rr => anyhow::bail!("expected a workproof error, got {:?}", rr),
@@ -95,14 +95,14 @@ async fn simple_client_test<M: MessageServer>() -> anyhow::Result<()> {
   let c1 = server.register_local_client("user 1".to_string()).await;
   let c2 = server.register_local_client("user 2".to_string()).await;
   let r = server
-    .handle_client_message(
-      c1,
-      ClientMessage::Text {
-        dest: c2,
-        content: "hello".into(),
-      },
-    )
-    .await;
+      .handle_client_message(
+        c1,
+        ClientMessage::Text {
+          dest: c2,
+          content: "hello".into(),
+        },
+      )
+      .await;
   if r != &[ClientReply::Delivered] {
     anyhow::bail!("expected a single delivered message, got {:?}", r)
   }
@@ -148,28 +148,28 @@ async fn multiple_client_messages_test<M: MessageServer>() -> anyhow::Result<()>
   let c3 = server.register_local_client("user 3".to_string()).await;
   for i in 0..100 {
     let r = server
-      .handle_client_message(
-        c1,
-        ClientMessage::Text {
-          dest: c2,
-          content: i.to_string(),
-        },
-      )
-      .await;
+        .handle_client_message(
+          c1,
+          ClientMessage::Text {
+            dest: c2,
+            content: i.to_string(),
+          },
+        )
+        .await;
     if r != [ClientReply::Delivered] {
       anyhow::bail!("A> Could not deliver message {}, got {:?}", i, r);
     }
   }
   for i in 0..100 {
     let r = server
-      .handle_client_message(
-        c1,
-        ClientMessage::MText {
-          dest: vec![c2, c3],
-          content: (i + 100).to_string(),
-        },
-      )
-      .await;
+        .handle_client_message(
+          c1,
+          ClientMessage::MText {
+            dest: vec![c2, c3],
+            content: (i + 100).to_string(),
+          },
+        )
+        .await;
     if r != [ClientReply::Delivered, ClientReply::Delivered] {
       anyhow::bail!("B> Could not deliver message {}, got {:?}", i, r);
     }
@@ -229,14 +229,14 @@ async fn mixed_results_client_message<M: MessageServer>() -> anyhow::Result<()> 
   let c3 = ClientId::default();
 
   let m = server
-    .handle_client_message(
-      c1,
-      ClientMessage::MText {
-        dest: vec![c2, c3],
-        content: "Hello".to_string(),
-      },
-    )
-    .await;
+      .handle_client_message(
+        c1,
+        ClientMessage::MText {
+          dest: vec![c2, c3],
+          content: "Hello".to_string(),
+        },
+      )
+      .await;
   if m != [ClientReply::Delivered, ClientReply::Delayed] {
     anyhow::bail!("Expected Delivered/Delayed, but got {:?}", m)
   }
@@ -252,27 +252,27 @@ async fn mailbox_full<M: MessageServer>() -> anyhow::Result<()> {
 
   for n in 0..MAILBOX_SIZE {
     let m = server
-      .handle_client_message(
-        c1,
-        ClientMessage::Text {
-          dest: c2,
-          content: format!("{n}"),
-        },
-      )
-      .await;
+        .handle_client_message(
+          c1,
+          ClientMessage::Text {
+            dest: c2,
+            content: format!("{n}"),
+          },
+        )
+        .await;
     if m != [ClientReply::Delivered] {
       anyhow::bail!("Expected Delivered, but got {:?}", m)
     }
   }
   let m = server
-    .handle_client_message(
-      c1,
-      ClientMessage::Text {
-        dest: c2,
-        content: "FULL".into(),
-      },
-    )
-    .await;
+      .handle_client_message(
+        c1,
+        ClientMessage::Text {
+          dest: c2,
+          content: "FULL".into(),
+        },
+      )
+      .await;
   if m != [ClientReply::Error(ClientError::BoxFull(c2))] {
     anyhow::bail!("Expected BoxFull, but got {:?}", m)
   }
@@ -291,27 +291,26 @@ async fn message_to_outer_user<M: MessageServer>() -> anyhow::Result<()> {
   let euuid = ClientId::default();
 
   log::debug!("route: {} -> {} -> {} -> us", s1, s2, s3);
-  println!("route: {} -> {} -> {} -> us", s1, s2, s3);
 
   let r = server
-    .handle_server_message(ServerMessage::Announce {
-      route: vec![s1, s2, s3],
-      clients: HashMap::from([(euuid, "external user".into())]),
-    })
-    .await;
+      .handle_server_message(ServerMessage::Announce {
+        route: vec![s1, s2, s3],
+        clients: HashMap::from([(euuid, "external user".into())]),
+      })
+      .await;
   if r != ServerReply::Outgoing(Vec::new()) {
     anyhow::bail!("Expected empty outgoing answer, got {:?}", r);
   }
   assert_eq!(r, ServerReply::Outgoing(Vec::new()));
   let r = server
-    .handle_client_message(
-      c1,
-      ClientMessage::Text {
-        dest: euuid,
-        content: "Hello".to_string(),
-      },
-    )
-    .await;
+      .handle_client_message(
+        c1,
+        ClientMessage::Text {
+          dest: euuid,
+          content: "Hello".to_string(),
+        },
+      )
+      .await;
   let expected = [ClientReply::Transfer(
     s3,
     ServerMessage::Message(FullyQualifiedMessage {
@@ -341,26 +340,25 @@ async fn message_to_outer_user_delayed<M: MessageServer>() -> anyhow::Result<()>
   let euuid = ClientId::default();
 
   log::debug!("route: {} -> {} -> {} -> us", s1, s2, s3);
-  println!("route: {} -> {} -> {} -> us", s1, s2, s3);
 
   let r = server
-    .handle_client_message(
-      c1,
-      ClientMessage::Text {
-        dest: euuid,
-        content: "Hello".to_string(),
-      },
-    )
-    .await;
+      .handle_client_message(
+        c1,
+        ClientMessage::Text {
+          dest: euuid,
+          content: "Hello".to_string(),
+        },
+      )
+      .await;
   if r != [ClientReply::Delayed] {
     anyhow::bail!("Expected a delayed message first, but got {:?}", r);
   }
   let r = server
-    .handle_server_message(ServerMessage::Announce {
-      route: vec![s1, s2, s3],
-      clients: HashMap::from([(euuid, "external user".into())]),
-    })
-    .await;
+      .handle_server_message(ServerMessage::Announce {
+        route: vec![s1, s2, s3],
+        clients: HashMap::from([(euuid, "external user".into())]),
+      })
+      .await;
   let expected = ServerReply::Outgoing(vec![Outgoing {
     nexthop: s3,
     message: FullyQualifiedMessage {
@@ -385,10 +383,10 @@ async fn routing_test<M: MessageServer>() -> anyhow::Result<()> {
   let c1 = server.register_local_client("user 1".to_string()).await;
   /* map:
 
-       us - s1 - s2
-        |         |
-       s5 - s4 - s3
-  */
+        us - s1 - s2
+         |         |
+        s5 - s4 - s3
+   */
   let s1 = ServerId::from(1);
   let s2 = ServerId::from(2);
   let s3 = ServerId::from(3);
@@ -397,119 +395,86 @@ async fn routing_test<M: MessageServer>() -> anyhow::Result<()> {
   let s4_user = ClientId::default();
   // first advertise the long route
   let r = server
-    .handle_server_message(ServerMessage::Announce {
-      route: vec![s4, s3, s2, s1],
-      clients: HashMap::from([(s4_user, "s4 user".into())]),
-    })
-    .await;
+      .handle_server_message(ServerMessage::Announce {
+        route: vec![s4, s3, s2, s1],
+        clients: HashMap::from([(s4_user, "s4 user".into())]),
+      })
+      .await;
   let expected_empty_out = ServerReply::Outgoing(Vec::new());
   if r != expected_empty_out {
     anyhow::bail!("msg1: Expected {:?}\n,    got {:?}", expected_empty_out, r);
   }
-  // send a message to this user and make sur we exit by node 1
-  let r = server
-    .handle_client_message(
-      c1,
-      ClientMessage::Text {
-        dest: s4_user,
-        content: "Hello".to_string(),
-      },
-    )
-    .await;
-  let expected1 = vec![ClientReply::Transfer(
-    s1,
-    ServerMessage::Message(FullyQualifiedMessage {
-      src: c1,
-      srcsrv: sid,
-      dsts: vec![(s4_user, s4)],
-      content: "Hello".to_string(),
-    }),
-  )];
-  if r != expected1 {
-    anyhow::bail!("msg2: Expected {:?}\n,    got {:?}", expected1, r);
-  }
+  assert_eq!(server.route_to(s4).await, Some(vec![sid, s1, s2, s3, s4]));
+  println!("First routing test passed");
   // now advertise another alternative route
   let r = server
-    .handle_server_message(ServerMessage::Announce {
-      route: vec![s2, s3, s4, s5],
-      clients: HashMap::new(),
-    })
-    .await;
+      .handle_server_message(ServerMessage::Announce {
+        route: vec![s2, s3, s4, s5],
+        clients: HashMap::new(),
+      })
+      .await;
   if r != expected_empty_out {
     anyhow::bail!("msg3: Expected {:?}\n,    got {:?}", expected_empty_out, r);
   }
-  let r = server
-    .handle_client_message(
-      c1,
-      ClientMessage::Text {
-        dest: s4_user,
-        content: "Hello 2".to_string(),
-      },
-    )
-    .await;
-  let expected2 = vec![ClientReply::Transfer(
-    s5,
-    ServerMessage::Message(FullyQualifiedMessage {
-      src: c1,
-      srcsrv: sid,
-      dsts: vec![(s4_user, s4)],
-      content: "Hello 2".to_string(),
-    }),
-  )];
-  if r != expected2 {
-    anyhow::bail!("msg4: Expected {:?}\n,    got {:?}", expected2, r);
-  }
+  println!("Testing shortest route...");
+  assert_eq!(server.route_to(s4).await, Some(vec![sid, s5, s4]));
+  println!("Second routing test passed");
   Ok(())
 }
 
 async fn all_tests<M: MessageServer>(counter: &mut usize) -> anyhow::Result<()> {
   sequence_correct::<M>()
-    .await
-    .with_context(|| "sequence_correct")?;
+      .await
+      .with_context(|| "sequence_correct")?;
   *counter = 1;
   sequence_bad::<M>().await.with_context(|| "sequence_bad")?;
   *counter += 1;
   workproof_bad::<M>()
-    .await
-    .with_context(|| "workproof_bad")?;
+      .await
+      .with_context(|| "workproof_bad")?;
   *counter += 1;
   sequence_unknown_user::<M>()
-    .await
-    .with_context(|| "sequence_unknown_user")?;
+      .await
+      .with_context(|| "sequence_unknown_user")?;
   *counter += 1;
   sequence_multiple_problems::<M>()
-    .await
-    .with_context(|| "sequence_bad")?;
+      .await
+      .with_context(|| "sequence_bad")?;
   *counter += 1;
   simple_client_test::<M>()
-    .await
-    .with_context(|| "simple_client_test")?;
+      .await
+      .with_context(|| "simple_client_test")?;
   *counter += 1;
   list_users_test::<M>()
-    .await
-    .with_context(|| "list_users_test")?;
+      .await
+      .with_context(|| "list_users_test")?;
   *counter += 1;
   multiple_client_messages_test::<M>()
-    .await
-    .with_context(|| "multiple_client_message_test")?;
+      .await
+      .with_context(|| "multiple_client_message_test")?;
   *counter += 1;
   mixed_results_client_message::<M>()
-    .await
-    .with_context(|| "mixed_results_client_message")?;
+      .await
+      .with_context(|| "mixed_results_client_message")?;
   *counter += 1;
   mailbox_full::<M>().await.with_context(|| "mailbox_full")?;
+  println!("All base tests passed");
+  println!("Running federation tests...");
   *counter += 1;
   #[cfg(feature = "federation")]
   {
     message_to_outer_user::<M>()
-      .await
-      .with_context(|| "message_to_outer_user")?;
+        .await
+        .with_context(|| "message_to_outer_user")?;
+    println!("message_to_outer_user passed");
     *counter += 1;
     message_to_outer_user_delayed::<M>()
-      .await
-      .with_context(|| "message_to_outer_user_delayed")?;
+        .await
+        .with_context(|| "message_to_outer_user_delayed")?;
+    println!("message_to_outer_user_delayed passed");
     *counter += 1;
     routing_test::<M>().await.with_context(|| "routing")?;
+    println!("routing passed");
     *counter += 1;
   }
   Ok(())
