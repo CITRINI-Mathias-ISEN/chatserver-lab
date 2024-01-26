@@ -1,7 +1,7 @@
-use std::cmp::{Ordering, Reverse};
+use crate::messages::ServerMessage;
 use async_std::sync::RwLock;
 use async_trait::async_trait;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap};
 use uuid::Uuid;
 
 use crate::{
@@ -13,38 +13,35 @@ use crate::{
   workproof::verify_workproof,
 };
 
-use crate::messages::ClientQuery;
 #[cfg(feature = "federation")]
-use crate::messages::{Outgoing, ServerMessage, ServerReply};
-use crate::netproto::decode::u128;
+use crate::messages::{Outgoing, ServerReply};
 
 // this structure will contain the data you need to track in your server
 // this will include things like delivered messages, clients last seen sequence number, etc.
 pub struct Server {
   id: ServerId,
-  clients: RwLock<Vec<Client>>,
-  routes: RwLock<Vec<Vec<ServerId>>>,
-  neighbours: RwLock<HashMap<ServerId, Vec<ServerId>>>,
-  stored: RwLock<Vec<Stored>>,
-  remote_clients: RwLock<HashMap<ClientId, ClientInfo>>,
+  clients: RwLock<Vec<Client>>, // Clients registered on the server
+  routes: RwLock<Vec<Vec<ServerId>>>, // Routes to each server
+  stored: RwLock<Vec<Stored>>, // Stored messages
+  remote_clients: RwLock<HashMap<ClientId, ClientInfo>>, // Remote clients
 }
 
 pub struct Stored {
-  src: ClientId,
-  dst: ClientId,
-  content: String,
+  src: ClientId, // Source client
+  dst: ClientId, // Destination client
+  content: String, // Content of the message
 }
 
 pub struct Client {
-  id: ClientId,
-  name: String,
-  last_seen: u64,
-  mailbox: Vec<(ClientId, String)>,
+  id: ClientId, // Client id
+  name: String, // Client name
+  last_seen: u64, // Last seen sequence number
+  mailbox: Vec<(ClientId, String)>, // Mailbox of the client
 }
 
 pub struct ClientInfo {
-  name: String,
-  server: ServerId,
+  name: String, // Client name
+  server: ServerId, // Server id
 }
 
 #[async_trait]
@@ -56,7 +53,6 @@ impl MessageServer for Server {
       id,
       clients: Default::default(),
       routes: Default::default(),
-      neighbours: Default::default(),
       stored: Default::default(),
       remote_clients: Default::default(),
     }
@@ -68,14 +64,15 @@ impl MessageServer for Server {
   async fn register_local_client(&self, name: String) -> ClientId {
     let uuid = Uuid::new_v4();
     let client_id = ClientId::from(uuid);
-    let mut clients = self.clients.write().await;
     log::info!("Registering client {} with id {}", name, client_id);
+    let mut clients = self.clients.write().await;
     clients.push(Client {
       id: client_id,
       name,
       last_seen: 0,
       mailbox: Vec::new(),
     });
+    drop(clients);
     return client_id;
   }
 
@@ -86,11 +83,19 @@ impl MessageServer for Server {
    * then, if the client is known, its last seen sequence number must be verified (and updated)
   */
   async fn list_users(&self) -> HashMap<ClientId, String> {
-    let clients = self.clients.read().await;
     let mut users = HashMap::new();
+    // Local
+    let clients = self.clients.read().await;
     for client in clients.iter() {
       users.insert(client.id, client.name.clone());
     }
+    drop(clients);
+    // Remote
+    let remote_clients = self.remote_clients.read().await;
+    for (client_id, client_info) in remote_clients.iter() {
+      users.insert(client_id.clone(), client_info.name.clone());
+    }
+    drop(remote_clients);
     users
   }
 
@@ -104,17 +109,14 @@ impl MessageServer for Server {
     It is recommended to write an function that handles a single message and use it to handle
     both ClientMessage variants.
   */
-  async fn handle_sequenced_message<A: Send>(
-    &self,
-    sequence: Sequence<A>,
-  ) -> Result<A, ClientError> {
+  async fn handle_sequenced_message<A: Send>(&self, sequence: Sequence<A>) -> Result<A, ClientError> {
     log::debug!(
       "Handling sequenced message from {} with seqid {}",
       sequence.src,
       sequence.seqid
     );
 
-    // check workproof
+    // Check workproof
     if !verify_workproof(
       (&sequence.src).into(),
       sequence.workproof,
@@ -124,13 +126,13 @@ impl MessageServer for Server {
       return Err(ClientError::WorkProofError);
     }
 
-    // check if client is known
-    let clients = self.clients.read().await;
+    // Check if client is known
+    let mut clients = self.clients.write().await;
     let client = clients.iter().find(|client| client.id == sequence.src);
     if let Some(client) = client {
       log::debug!("Message from known client : {}", client.name);
 
-      // check if sequence number is correct
+      // Check if sequence number is increasing
       log::debug!("received: {}", sequence.seqid);
       if client.last_seen >= (sequence.seqid as u64) {
         log::debug!(
@@ -141,11 +143,6 @@ impl MessageServer for Server {
         return Err(ClientError::SequenceError);
       }
 
-      // Closing the read lock to avoid deadlock
-      drop(clients);
-
-      // update last seen sequence number
-      let mut clients = self.clients.write().await;
       if let Some(client) = clients.iter_mut().find(|client| client.id == sequence.src) {
         client.last_seen = sequence.seqid as u64;
       } else {
@@ -156,7 +153,6 @@ impl MessageServer for Server {
       log::debug!("Unknown client");
       return Err(ClientError::UnknownClient);
     }
-    log::debug!("Handling sequenced message done!");
     return Ok(sequence.content);
   }
 
@@ -168,14 +164,15 @@ impl MessageServer for Server {
     let mut clients = self.clients.write().await;
     let client_elem = clients.iter_mut().find(|client| client.id == client_id);
 
+    // If the client is known
     if let Some(client) = client_elem {
+      // If the mailbox is empty
       if client.mailbox.is_empty() {
         return ClientPollReply::Nothing;
       }
 
       // Get the first message
       let (src, msg) = client.mailbox.remove(0);
-
       ClientPollReply::Message { src, content: msg }
     } else {
       return ClientPollReply::Nothing;
@@ -232,16 +229,14 @@ impl MessageServer for Server {
         let mut routes = self.routes.write().await;
         routes.push(route);
         drop(routes);
-        // Store neighbours of each server
-        self.update_neighbours().await;
         // Check if there are messages waiting for the remote clients, in this case, send server messages
         let mut replies = Vec::new();
-        let mut stored = self.stored.write().await;
+        let stored = self.stored.write().await;
         for message in stored.iter() {
           if let Some(client_info) = remote_clients.get(&message.dst) {
             if let Some(route) = self.route_to(client_info.server).await {
-              let dst = route.first().unwrap().clone();
-              let next_hop = route.last().unwrap().clone();
+              let dst = route.last().unwrap().clone();
+              let next_hop = route.get(1).unwrap().clone();
               replies.push(Outgoing {
                 nexthop: next_hop,
                 message: FullyQualifiedMessage {
@@ -262,7 +257,7 @@ impl MessageServer for Server {
             .route_to(msg.dsts.first().unwrap().1)
             .await
             .unwrap()
-            .first()
+            .last()
             .unwrap()
             .clone();
         ServerReply::Outgoing(vec![Outgoing {
@@ -284,17 +279,20 @@ impl MessageServer for Server {
   async fn route_to(&self, destination: ServerId) -> Option<Vec<ServerId>> {
     let routes = self.routes.read().await;
 
-    // Find routes that contain the destination
-    let mut valid_routes: Vec<&Vec<ServerId>> = routes
+    // reverse the routes to have the destination at the end and add the current server at the beginning
+    let routes_m: Vec<Vec<ServerId>> = routes
         .iter()
         .filter(|route| route.contains(&destination))
+        .map(|route| {
+          let mut route = route.clone();
+          route.reverse();
+
+          route.insert(0, self.id);
+
+          route
+        })
         .collect();
-
-    // Find the shortest route
-    valid_routes.sort_by_key(|route| route.len());
-
-    // Return the shortest route
-    valid_routes.first().cloned().cloned()
+    routes_m.first().cloned()
   }
 }
 
@@ -319,7 +317,7 @@ impl Server {
       None => {
         let maybe_id: Option<ServerId> = self.get_remote_client_server(dest).await;
         if let Some(id) = maybe_id {
-          let next_server = self.route_to(id).await.unwrap().first().unwrap().clone();
+          let next_server = self.route_to(id).await.unwrap().last().unwrap().clone();
           ClientReply::Transfer(
             id,
             ServerMessage::Message(FullyQualifiedMessage {
@@ -332,11 +330,11 @@ impl Server {
         } else {
           let mut stored = self.stored.write().await;
           stored.push(
-            (Stored {
+            Stored {
               src,
               dst: dest,
               content,
-            }),
+            },
           );
           ClientReply::Delayed
         }
@@ -354,51 +352,12 @@ impl Server {
     result
   }
 
-  async fn is_local(&self, client_id: ClientId) -> bool {
-    let clients = self.clients.read().await;
-    clients.iter().any(|client| client.id == client_id)
-  }
-
   async fn get_remote_client_server(&self, client_id: ClientId) -> Option<ServerId> {
     let remote_clients = self.remote_clients.read().await;
     // Get the server id of the client, knowing that it is a ClientInfo
     remote_clients
-      .get(&client_id)
-      .map(|client_info| client_info.server)
-  }
-
-  async fn update_neighbours(&self) {
-    let mut neighbours = self.neighbours.write().await;
-    let mut routes = self.routes.read().await;
-    for route in routes.iter() {
-      for (i, server) in route.iter().enumerate() {
-        if i == 0 {
-          if !neighbours.contains_key(server) {
-            neighbours.insert(*server, Vec::new());
-          }
-        } else {
-          neighbours
-            .entry(*server)
-            .or_insert_with(Vec::new)
-            .push(route[i - 1]);
-          neighbours
-            .entry(route[i - 1])
-            .or_insert_with(Vec::new)
-            .push(*server);
-        }
-      }
-      neighbours
-        .entry(self.id)
-        .or_insert_with(Vec::new)
-        .push(route.last().unwrap().clone());
-    }
-    // Filter duplicates
-    for (_, neighbours) in neighbours.iter_mut() {
-      neighbours.sort();
-      neighbours.dedup();
-    }
-
-    println!("Neighbours: {:?}", neighbours);
+        .get(&client_id)
+        .map(|client_info| client_info.server)
   }
 }
 
