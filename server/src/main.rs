@@ -138,7 +138,7 @@ fn main() {
   pretty_env_logger::init();
   let opt = Opt::from_args();
 
-  let server = chatproto::solutions::sample::Server::new(ServerId::default());
+  let server = chatproto::solutions::citrini_repplinger_vassoille::Server::new(ServerId::default());
   let clock = Arc::new(RwLock::new(server));
   #[cfg(feature = "federation")]
   let slock = clock.clone();
