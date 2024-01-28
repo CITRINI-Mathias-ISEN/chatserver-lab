@@ -1,7 +1,7 @@
 use crate::messages::ServerMessage;
 use async_std::sync::RwLock;
 use async_trait::async_trait;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
@@ -20,27 +20,27 @@ use crate::messages::{Outgoing, ServerReply};
 // this will include things like delivered messages, clients last seen sequence number, etc.
 pub struct Server {
   id: ServerId,
-  clients: RwLock<Vec<Client>>, // Clients registered on the server
+  clients: RwLock<Vec<Client>>,       // Clients registered on the server
   routes: RwLock<Vec<Vec<ServerId>>>, // Routes to each server
-  stored: RwLock<Vec<Stored>>, // Stored messages
+  stored: RwLock<Vec<Stored>>,        // Stored messages
   remote_clients: RwLock<HashMap<ClientId, ClientInfo>>, // Remote clients
 }
 
 pub struct Stored {
-  src: ClientId, // Source client
-  dst: ClientId, // Destination client
+  src: ClientId,   // Source client
+  dst: ClientId,   // Destination client
   content: String, // Content of the message
 }
 
 pub struct Client {
-  id: ClientId, // Client id
-  name: String, // Client name
-  last_seen: u64, // Last seen sequence number
+  id: ClientId,                     // Client id
+  name: String,                     // Client name
+  last_seen: u64,                   // Last seen sequence number
   mailbox: Vec<(ClientId, String)>, // Mailbox of the client
 }
 
 pub struct ClientInfo {
-  name: String, // Client name
+  name: String,     // Client name
   server: ServerId, // Server id
 }
 
@@ -109,7 +109,10 @@ impl MessageServer for Server {
     It is recommended to write an function that handles a single message and use it to handle
     both ClientMessage variants.
   */
-  async fn handle_sequenced_message<A: Send>(&self, sequence: Sequence<A>) -> Result<A, ClientError> {
+  async fn handle_sequenced_message<A: Send>(
+    &self,
+    sequence: Sequence<A>,
+  ) -> Result<A, ClientError> {
     log::debug!(
       "Handling sequenced message from {} with seqid {}",
       sequence.src,
@@ -210,6 +213,7 @@ impl MessageServer for Server {
   #[cfg(feature = "federation")]
   async fn handle_server_message(&self, msg: ServerMessage) -> ServerReply {
     return match msg {
+      /* -- Announce -- */
       ServerMessage::Announce { route, clients } => {
         if route.len() == 0 {
           return ServerReply::EmptyRoute;
@@ -252,14 +256,15 @@ impl MessageServer for Server {
         drop(stored);
         ServerReply::Outgoing(replies)
       }
+      /* -- Message -- */
       ServerMessage::Message(msg) => {
         let next_server = self
-            .route_to(msg.dsts.first().unwrap().1)
-            .await
-            .unwrap()
-            .last()
-            .unwrap()
-            .clone();
+          .route_to(msg.dsts.first().unwrap().1)
+          .await
+          .unwrap()
+          .last()
+          .unwrap()
+          .clone();
         ServerReply::Outgoing(vec![Outgoing {
           nexthop: next_server,
           message: FullyQualifiedMessage {
@@ -281,21 +286,20 @@ impl MessageServer for Server {
 
     // reverse the routes to have the destination at the end and add the current server at the beginning
     let routes_m: Vec<Vec<ServerId>> = routes
-        .iter()
-        .filter(|route| route.contains(&destination))
-        .map(|route| {
-          let mut route = route.clone();
-          route.reverse();
+      .iter()
+      .filter(|route| route.contains(&destination))
+      .map(|route| {
+        let mut route = route.clone();
+        route.reverse();
 
-          route.insert(0, self.id);
+        route.insert(0, self.id);
 
-          route
-        })
-        .collect();
+        route
+      })
+      .collect();
     routes_m.first().cloned()
   }
 }
-
 
 impl Server {
   async fn handle_text_message(
@@ -329,13 +333,11 @@ impl Server {
           )
         } else {
           let mut stored = self.stored.write().await;
-          stored.push(
-            Stored {
-              src,
-              dst: dest,
-              content,
-            },
-          );
+          stored.push(Stored {
+            src,
+            dst: dest,
+            content,
+          });
           ClientReply::Delayed
         }
       }
@@ -354,10 +356,9 @@ impl Server {
 
   async fn get_remote_client_server(&self, client_id: ClientId) -> Option<ServerId> {
     let remote_clients = self.remote_clients.read().await;
-    // Get the server id of the client, knowing that it is a ClientInfo
     remote_clients
-        .get(&client_id)
-        .map(|client_info| client_info.server)
+      .get(&client_id)
+      .map(|client_info| client_info.server)
   }
 }
 
